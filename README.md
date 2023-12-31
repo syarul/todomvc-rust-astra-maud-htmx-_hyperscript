@@ -18,10 +18,15 @@
 
 ### Usage
 - install `Rust` if you don't have
-- install `cargo`
 - run `cargo build`
 - run `cargo run`
 - visit [http://localhost:8000/](http://localhost:8000/)
+
+### Concept
+I've choose 3 different ownership concepts with **Atomic**, **Mutex** and **RwLock** to show how to operate handling the todos
+- Atomic for the counter, specifically `AtomicU16` unassigned 16 bit integer. the counter will goes up when new todo is inserted to the todos vector.
+- `Mutex` is use to store the todos, with the locking mechanism in place ensure the changes to the todos will be handled correctly on multi thread ops.
+- `RwLock` is used to handle the filter (tab link #/all #/active #/completed), since the length is never changed with only selected parameter changed when pages is click, it save to do read/write operations.
 
 ### HTMX
 Visit [https://github.com/rajasegar/awesome-htmx](https://github.com/rajasegar/awesome-htmx) to look for HTMX curated infos

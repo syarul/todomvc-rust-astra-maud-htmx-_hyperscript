@@ -6,7 +6,10 @@ pub use maud::*;
 use astra::{Body, ConnectionInfo, Request, Response, ResponseBuilder, Server};
 use fragments::{edit_todo, filter_bar, page, todo_item};
 use serde_json::json;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{
+    atomic::{AtomicU16, Ordering},
+    Arc, Mutex, MutexGuard, RwLock,
+};
 use url::form_urlencoded::parse;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -21,12 +24,10 @@ impl Todo {
     // helper method to create a new instance with a calculated ID
     // the counter can only go up, which good enough for in-memory indexing
     // if we storing the data elsewhere this might not be the case anymore
-    fn new_id(task: String, done: bool, editing: bool, counter: &Arc<Mutex<u32>>) -> Todo {
-        let mut id_counter = counter.lock().unwrap();
-        let id = *id_counter;
-        *id_counter += 1; // Increment the counter for the next ID
+    fn new_id(task: String, done: bool, editing: bool, counter: &Arc<AtomicU16>) -> Todo {
+        let id = counter.fetch_add(1, Ordering::Relaxed); // increment the counter for the next ID
         Todo {
-            id,
+            id: id.into(),
             task,
             done,
             editing,
@@ -46,7 +47,7 @@ trait UpdateSelected {
     type Item;
     fn update_selected_by_property(
         value: String,
-        filters: &Arc<Mutex<Vec<Self::Item>>>,
+        filters: &Arc<RwLock<Vec<Self::Item>>>,
         property: fn(&Self::Item) -> &str,
     );
 }
@@ -55,11 +56,11 @@ impl UpdateSelected for Filter {
     type Item = Filter;
     fn update_selected_by_property(
         value: String,
-        filters: &Arc<Mutex<Vec<Filter>>>,
+        filters: &Arc<RwLock<Vec<Filter>>>,
         property: fn(&Filter) -> &str,
     ) {
-        let mut filters_lock = filters.lock().unwrap();
-        for filter in &mut *filters_lock {
+        let mut filters_write = filters.write().unwrap();
+        for filter in &mut *filters_write {
             filter.selected = property(filter) == value;
         }
     }
@@ -85,13 +86,13 @@ fn response(status: u16, mk: PreEscaped<String>) -> Response {
 }
 
 // use generic so we can use this for different template
-fn build_str_vector<F, T>(template_frag: F, vector: &Arc<Mutex<Vec<T>>>) -> PreEscaped<String>
+fn build_str_vector<F, T>(template_frag: F, vector: &Arc<RwLock<Vec<T>>>) -> PreEscaped<String>
 where
     F: FnOnce(&[T]) -> Markup,
     T: Clone + PartialEq,
 {
-    let vector_lock = vector.lock().unwrap();
-    let mk = template_frag(&vector_lock);
+    let vector_read = vector.read().unwrap();
+    let mk = template_frag(&vector_read);
     mk
 }
 
@@ -134,19 +135,19 @@ fn update_counts(todos: &MutexGuard<'_, Vec<Todo>>) -> String {
 fn handle_request(
     _req: Request,
     _info: ConnectionInfo,
-    id_counter: Arc<Mutex<u32>>,
+    id_counter: Arc<AtomicU16>,
     todos: Arc<Mutex<Vec<Todo>>>,
-    filters: Arc<Mutex<Vec<Filter>>>,
+    filters: Arc<RwLock<Vec<Filter>>>,
 ) -> Response {
     // acquire the lock to access and modify the todos vector
     let mut todos_lock = todos.lock().unwrap();
 
     match _req.uri().path() {
         "/" => {
-            // acquire a read lock to access the filters array
-            let filters_lock = filters.lock().unwrap();
+            // acquire a read to access the filters array
+            let filters_read = filters.read().unwrap();
             let checked = def_checked(&todos_lock);
-            let mk = page("HTMX • TodoMVC", &filters_lock, &todos_lock, checked);
+            let mk = page("HTMX • TodoMVC", &filters_read, &todos_lock, checked);
             let mk_str = mk.into_string();
             Response::new(Body::new(mk_str))
         }
@@ -159,10 +160,8 @@ fn handle_request(
             if let Some(name) = filter_name {
                 // call to update_selected
                 Filter::update_selected_by_property(name, &filters, |f| &f.name);
-                vector_response = build_str_vector(|filters| filter_bar(filters), &filters);
-            } else {
-                vector_response = build_str_vector(|filters| filter_bar(filters), &filters);
             }
+            vector_response = build_str_vector(|filters| filter_bar(filters), &filters);
             response(200, vector_response)
         }
         "/add-todo" => {
@@ -288,14 +287,17 @@ fn handle_request(
     }
 }
 fn main() {
-    // ensure thread safety
-    // start the counter at 0 with unassigned 32-bit integer
-    let id_counter = Arc::new(Mutex::new(0));
-    // initialize the todos vector
+    // choose 3 different ownership concepts with Atomic, Mutex and RwLock
+    // wrap all in Arc
+    // use Atomic for the id_counter
+    let id_counter = Arc::new(AtomicU16::new(0));
+    // initialize the todos vector, use Mutex, lock for any operations ensure
+    // the atomic counter always sync when the length of the vector goes up
     let todos = Arc::new(Mutex::new(Vec::new()));
-
-    // initialize the filters vector
-    let filters = Arc::new(Mutex::new(vec![
+    // initialize the filters vector, use RwLock
+    // the filters will never change in length with the only changes is for updating
+    // the select parameters, so we do not need to lock with Mutex
+    let filters = Arc::new(RwLock::new(vec![
         Filter {
             url: "#/",
             name: "all",
