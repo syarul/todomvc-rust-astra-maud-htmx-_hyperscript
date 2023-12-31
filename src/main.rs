@@ -52,9 +52,6 @@ trait UpdateSelected {
 }
 
 impl UpdateSelected for Filter {
-    // helper method to create a new instance with a calculated ID
-    // the counter can only go up, which good enough for in-memory indexing
-    // if we storing the data elsewhere this might not be the case anymore
     type Item = Filter;
     fn update_selected_by_property(
         value: String,

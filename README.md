@@ -22,3 +22,6 @@
 - run `cargo build`
 - run `cargo run`
 - visit [http://localhost:8000/](http://localhost:8000/)
+
+### HTMX
+Visit [https://github.com/rajasegar/awesome-htmx](https://github.com/rajasegar/awesome-htmx) to look for HTMX curated infos
