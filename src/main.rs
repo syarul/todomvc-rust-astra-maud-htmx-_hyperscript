@@ -7,7 +7,7 @@ use astra::{Body, ConnectionInfo, Request, Response, ResponseBuilder, Server};
 use fragments::{edit_todo, filter_bar, page, todo_item};
 use serde_json::json;
 use std::sync::{
-    atomic::{AtomicU16, Ordering},
+    atomic::{AtomicU32, Ordering},
     Arc, Mutex, MutexGuard, RwLock,
 };
 use url::form_urlencoded::parse;
@@ -24,7 +24,7 @@ impl Todo {
     // helper method to create a new instance with a calculated ID
     // the counter can only go up, which good enough for in-memory indexing
     // if we storing the data elsewhere this might not be the case anymore
-    fn new_id(task: String, done: bool, editing: bool, counter: &Arc<AtomicU16>) -> Todo {
+    fn new_id(task: String, done: bool, editing: bool, counter: &Arc<AtomicU32>) -> Todo {
         let id = counter.fetch_add(1, Ordering::Relaxed); // increment the counter for the next ID
         Todo {
             id: id.into(),
@@ -135,7 +135,7 @@ fn update_counts(todos: &MutexGuard<'_, Vec<Todo>>) -> String {
 fn handle_request(
     _req: Request,
     _info: ConnectionInfo,
-    id_counter: Arc<AtomicU16>,
+    id_counter: Arc<AtomicU32>,
     todos: Arc<Mutex<Vec<Todo>>>,
     filters: Arc<RwLock<Vec<Filter>>>,
 ) -> Response {
@@ -290,7 +290,7 @@ fn main() {
     // choose 3 different ownership concepts with Atomic, Mutex and RwLock
     // wrap all in Arc
     // use Atomic for the id_counter
-    let id_counter = Arc::new(AtomicU16::new(0));
+    let id_counter = Arc::new(AtomicU32::new(0));
     // initialize the todos vector, use Mutex, lock for any operations ensure
     // the atomic counter always sync when the length of the vector goes up
     let todos = Arc::new(Mutex::new(Vec::new()));
