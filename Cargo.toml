@@ -1,0 +1,12 @@
+[package]
+name = "todomvc-htmx"
+version = "0.0.1"
+edition = "2021"
+license = "Apache 2.0"
+
+[dependencies]
+clap = { version = "4.4.0", features = ["derive", "env"] }
+astra = { git = "https://github.com/dpc/astra", rev = "f135e4c8be0409d371218669bcdb13566f35f116" }
+maud = { version = "0.25.0", features = [ "axum" ] }
+url = "2.2.2"
+serde_json = "1.0.105"
