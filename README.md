@@ -9,6 +9,7 @@
     ===========================================================
          Build with RUST, ASTRA, MAUD, HTMX & _HYPERSCRIPT
 
+[![Rust](https://github.com/syarul/todomvc-rust-astra-maud-htmx-_hyperscript/actions/workflows/rust.yml/badge.svg)](https://github.com/syarul/todomvc-rust-astra-maud-htmx-_hyperscript/actions/workflows/rust.yml)
 ### Use
 - [Rust](https://www.rust-lang.org/) - check out why is the most [loved](https://survey.stackoverflow.co/2023/#programming-scripting-and-markup-languages) language.
 - [astra](https://github.com/ibraheemdev/astra) - A blocking HTTP server built on top of [hyper](https://github.com/hyperium/hyper)
