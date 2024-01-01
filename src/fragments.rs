@@ -24,14 +24,20 @@ fn toggle_all(toggle: bool) -> Markup {
             _="
                 on load set $toggleAll to me
                 on toggleAll debounced at 100ms
-                fetch /toggle-all then
-                if it === 'true' and my.checked === false then
-                    set my.checked to true
-                else
-                    if my.checked === true and it === 'false' then set my.checked to false
-                end
-                end
-                on click send toggle to <input.toggle/>" {}
+                    fetch /toggle-all then
+                        if it === 'true' and my.checked === false then
+                            set my.checked to true
+                        else
+                            if my.checked === true and it === 'false' then set my.checked to false
+                        end
+                        end
+                        on click send toggle to <input.toggle/>
+                on toggleAllDisplay
+                    if $todo.hasChildNodes()
+                        set my.style.display to 'block'
+                    else
+                    set my.style.display to 'none'" 
+            style="display:none;" {}
     }
 }
 
@@ -88,7 +94,12 @@ pub fn edit_todo(todo: &Todo) -> Markup {
             autofocus
             _="
                 on keyup[keyCode==27] remove .editing from closest <li/>
-                on htmx:afterRequest send focus to <input.new-todo/>" {}
+                on htmx:afterRequest
+                    send toggleDisplayClearCompleted to <button.clear-completed/>
+                    send todoCount to <span.todo-count/>
+                    send toggleAll to <input.toggle-all/>
+                    send toggleAllDisplay to <input.toggle-all/>
+                    send footerToggleDisplay to <footer.footer/>" {}
     }
 }
 
@@ -130,7 +141,7 @@ pub fn todo_item(todo: &Todo) -> Markup {
                     hx-trigger="click"
                     hx-target="closest <li/>"
                     _="
-                    on htmx:afterRequest 
+                    on htmx:afterRequest
                         send toggleDisplayClearCompleted to <button.clear-completed/>
                         send todoCount to <span.todo-count/>
                         send toggleAll to <input.toggle-all/>
@@ -176,12 +187,12 @@ fn todoapp(filters: &[Filter], todos: &[Todo], checked: bool) -> Markup {
                             label
                                 for="toggle-all"
                                 _="
-                                on load send labelToggleAll to me
-                                on labelToggleAll debounced at 100ms
-                                    if $todo.hasChildNodes() set my.style.display to 'flex'
-                                    else set my.style.display to 'none'"
-                                style="display:none;" {
-                                "Mark all as complete"
+                                    on load send labelToggleAll to me
+                                    on labelToggleAll debounced at 100ms
+                                        if $todo.hasChildNodes() set my.style.display to 'flex'
+                                        else set my.style.display to 'none'"
+                                    style="display:none;" {
+                                    "Mark all as complete"
                             }
                         }
                     ul

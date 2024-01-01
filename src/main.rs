@@ -246,6 +246,10 @@ fn handle_request(
                     if let Some(todo) = todos_lock.iter_mut().find(|t| t.id == todo_id) {
                         if !task.trim().is_empty() {
                             todo.task = task;
+                        } else {
+                            // behave same as remove if user send empty task
+                            todos_lock.retain(|t| t.id != todo_id);
+                            return response(200, PreEscaped(String::new()));
                         }
                         let struct_response = build_str_struct(|todo| todo_item(todo), todo);
                         return response(200, struct_response);
