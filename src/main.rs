@@ -156,10 +156,24 @@ fn handle_request(
                 .uri()
                 .query()
                 .and_then(|query| extract_query_param(query, "name"));
+            let filter_hash = _req
+                .uri()
+                .query()
+                .and_then(|query| extract_query_param(query, "hash"));
             let vector_response;
             if let Some(name) = filter_name {
                 // call to update_selected
                 Filter::update_selected_by_property(name, &filters, |f| &f.name);
+            } else {
+                if let Some(hash) = filter_hash {
+                    if !hash.is_empty() {
+                        Filter::update_selected_by_property(hash, &filters, |f| &f.name);
+                    } else {
+                        Filter::update_selected_by_property("all".to_string(), &filters, |f| {
+                            &f.name
+                        });
+                    }
+                }
             }
             vector_response = build_str_vector(|filters| filter_bar(filters), &filters);
             response(200, vector_response)
@@ -232,13 +246,9 @@ fn handle_request(
                     if let Some(todo) = todos_lock.iter_mut().find(|t| t.id == todo_id) {
                         if !task.trim().is_empty() {
                             todo.task = task;
-                            let struct_response = build_str_struct(|todo| todo_item(todo), todo);
-                            return response(200, struct_response);
-                        } else {
-                            // return the original string if client try to make it as empty task
-                            let struct_response = build_str_struct(|todo| todo_item(todo), todo);
-                            return response(200, struct_response);
                         }
+                        let struct_response = build_str_struct(|todo| todo_item(todo), todo);
+                        return response(200, struct_response);
                     }
                 }
             }

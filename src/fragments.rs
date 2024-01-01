@@ -149,7 +149,7 @@ fn todoapp(filters: &[Filter], todos: &[Todo], checked: bool) -> Markup {
             section
                 class="todoapp"
                 hx-get="/get-hash"
-                hx-vals="js:{hash: window.location.hash}"
+                hx-vals="js:{hash: window.location.hash.slice(2)}"
                 hx-trigger="load"
                 hx-target=".filters"
                 hx-swap="outerHTML"
