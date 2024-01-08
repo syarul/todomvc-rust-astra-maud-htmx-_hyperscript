@@ -1,15 +1,17 @@
 use crate::{Filter, Todo};
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 
-fn header(page_title: &str) -> Markup {
+pub fn clear_completed(has_completed: bool) -> Markup {
     html! {
-        (DOCTYPE)
-        html lang="en" data-framework="htmx";
-        head {
-            meta charset="utf-8";
-            title { (page_title) }
-            link rel="stylesheet" type="text/css" href="https://unpkg.com/todomvc-common@1.0.5/base.css";
-            link rel="stylesheet" type="text/css" href="https://unpkg.com/todomvc-app-css/index.css";
+        @if has_completed {
+            button
+                class="clear-completed"
+                _="
+                    on load set $clearCompleted to me
+                    on click send destroy to <li.completed/>
+                " { 
+                "Clear Complete"
+            }
         }
     }
 }
@@ -30,34 +32,57 @@ fn toggle_all(toggle: bool) -> Markup {
                         else
                             if my.checked === true and it === 'false' then set my.checked to false
                         end
-                        end
-                        on click send toggle to <input.toggle/>
-                on toggleAllDisplay
-                    if $todo.hasChildNodes()
-                        set my.style.display to 'block'
-                    else
-                    set my.style.display to 'none'" 
-            style="display:none;" {}
+                end
+                on click send toggle to <input.toggle/>
+            " {}
     }
 }
 
 pub fn filter_bar(filters: &[Filter]) -> Markup {
     html! {
-        ul class="filters" {
+        ul class="filters" _="on load set $filter to me" {
             @for filter in filters {
                 li {
                     a
                         class={ @if filter.selected { "selected" } }
                         href={ (filter.url) }
-                        hx-get={ "/get-hash?name="(filter.name) }
-                        hx-trigger="click"
-                        hx-target=".filters"
-                        hx-swap="outerHTML"
-                        _="on htmx:afterRequest send show to <li.todo/>"
+                        _="on click add .selected to me"
                         { (filter.name) }
                 }
             }
         }
+    }
+}
+
+// blur event handle both keyup ESC and blur
+// where only blur should trigger update call while ESC is not
+pub fn edit_todo(todo: &Todo) -> Markup {
+    let value = if todo.editing { &todo.task } else { "" };
+    html! {
+        input
+            class="edit"
+            name="task"
+            value={ (value) }
+            _="
+                on load
+                    my.focus()
+                on keyup[keyCode==27]
+                    set $keyup to 'esc'
+                    remove .editing from closest <li/>
+                on keyup[keyCode==13]
+                    set $keyup to 'enter'
+                    htmx.ajax('GET', '/update-todo?id=${my.parentNode.id}&task=${my.value}', {target: closest <li/>, swap:'outerHTML'})
+                on blur debounced at 10ms
+                    if $keyup === 'enter'
+                    set $keyup to 'none'
+                    else if $keyup === 'esc'
+                    set $keyup to 'none'
+                    else
+                    htmx.ajax('GET', `/update-todo?id=${my.parentNode.id}&task=${my.value}`, {target: closest <li/>, swap:'outerHTML'})
+                end
+                send toggleMain to <section.todoapp/>
+                send toggleFooter to <section.todoapp/>
+            " {}
     }
 }
 
@@ -68,102 +93,229 @@ fn todo_check(todo: &Todo) -> Markup {
             class="toggle"
             type="checkbox"
             checked[toggle]
-            hx-patch={ "/toggle-todo?id="(todo.id) }
+            hx-patch={ "/toggle-todo?id="(todo.id)"&done="(todo.done) }
             hx-target="closest <li/>"
             hx-swap="outerHTML"
             _="
+            on htmx:afterRequest
+                send toggleAll to <input.toggle-all/>
+                send toggleClearCompleted to <footer.footer/>
             on toggle
+                send toggleClearCompleted to <footer.footer/>
                 if $toggleAll.checked and my.checked === false
-                my.click()
+                    my.click()
                 else if $toggleAll.checked === false and my.checked
-                my.click()" {}
+                    my.click()
+            " {}
     }
 }
 
-pub fn edit_todo(todo: &Todo) -> Markup {
-    let value = if todo.editing { &todo.task } else { "" };
+pub fn todo_item(todo: &Todo, filter_name: &str) -> Markup {
+    let should_render = !todo.done && filter_name == "Active"
+        || todo.done && filter_name == "Completed"
+        || filter_name == "All";
     html! {
-        input
-            class="edit"
-            name="task"
-            value={ (value) }
-            hx-trigger="keyup[keyCode==13], task"
-            hx-get={ "/update-todo?id="(todo.id) }
-            hx-target="closest <li/>"
-            hx-swap="outerHTML"
-            autofocus
-            _="
-                on keyup[keyCode==27] remove .editing from closest <li/>
-                on htmx:afterRequest
-                    send toggleDisplayClearCompleted to <button.clear-completed/>
-                    send todoCount to <span.todo-count/>
-                    send toggleAll to <input.toggle-all/>
-                    send toggleAllDisplay to <input.toggle-all/>
-                    send footerToggleDisplay to <footer.footer/>" {}
-    }
-}
-
-pub fn todo_item(todo: &Todo) -> Markup {
-    html! {
-        li
-            id={ (todo.id) }
-            class={
-                "todo "
-                @if todo.done { "completed " }
-                @if todo.editing { "editing" }
-            }
-            _="
-            on destroy my.querySelector('button').click()
-            on show wait 20ms
-                if window.location.hash === '#/active' and my.classList.contains('completed')
-                set my.style.display to 'none'
-                else if window.location.hash === '#/completed' and my.classList.contains('completed') === false
-                set my.style.display to 'none'
-                else
-                set my.style.display to 'block'" {
-            div class="view" {
-                (todo_check(todo))
-                label
-                    hx-trigger="dblclick"
-                    hx-patch={ "/edit-todo?id="(todo.id) }
-                    hx-target="next input"
-                    hx-swap="outerHTML"
-                    _="
-                    on dblclick add .editing to the closest <li/>
-                    on htmx:afterRequest
-                        set $el to my.parentNode.nextSibling
-                        set $el.selectionStart to $el.value.length" { 
-                    (todo.task)
+        @if should_render {
+            li
+                id={ (todo.id) }
+                class={
+                    "todo "
+                    @if todo.done { "completed " }
+                    @if todo.editing { "editing" }
                 }
-                button
-                    class="destroy"
-                    hx-delete={ "/remove-todo?id="(todo.id) }
-                    hx-trigger="click"
-                    hx-target="closest <li/>"
-                    _="
-                    on htmx:afterRequest
-                        send toggleDisplayClearCompleted to <button.clear-completed/>
-                        send todoCount to <span.todo-count/>
-                        send toggleAll to <input.toggle-all/>
-                        send footerToggleDisplay to <footer.footer/>
-                        send labelToggleAll to <label/>
-                        send focus to <input.new-todo/>" {}
+                _="on destroy my.querySelector('button').click()" {
+                div class="view" {
+                    (todo_check(todo))
+                    label
+                        hx-trigger="dblclick"
+                        hx-patch={ "/edit-todo?id="(todo.id) }
+                        hx-target="next input"
+                        hx-swap="outerHTML"
+                        _="
+                        on dblclick add .editing to the closest <li/>
+                        on htmx:afterRequest
+                            set $el to my.parentNode.nextSibling
+                            set $el.selectionStart to $el.value.length
+                        " { (todo.task) }
+                    button
+                        class="destroy"
+                        hx-delete={ "/remove-todo?id="(todo.id) }
+                        hx-trigger="click"
+                        hx-target="closest <li/>"
+                        _="
+                            on htmx:afterRequest 
+                                send toggleMain to <section.todoapp/>
+                                send toggleFooter to <section.todoapp/>
+                                send focus to <input.new-todo/>
+                                send toggleClearCompleted to <footer.footer/>
+                        " {}
+                }
+                (edit_todo(todo))
             }
-            (edit_todo(todo))
         }
     }
 }
 
-fn todoapp(filters: &[Filter], todos: &[Todo], checked: bool) -> Markup {
+pub fn toggle_main(todos: &[Todo], checked: bool) -> Markup {
+    let has_length = todos.len() != 0;
+    html! {
+        @if has_length {
+            section
+                class="main" _="on load set $sectionMain to me" {
+                    { (toggle_all(checked)) }
+                    label for="toggle-all" {
+                        "Mark all as complete"
+                    }
+                }
+        }
+    }
+}
+
+pub fn footer(todos: &[Todo], filters: &[Filter], has_completed: bool) -> Markup {
+    let has_todos = todos.len() != 0;
+    html! {
+        @if has_todos {
+            footer
+                class="footer"
+                _="
+                    on load set $footerFooter to me
+                    on toggleClearCompleted debounced at 10ms
+                        if $clearCompleted === undefined
+                            htmx.ajax('GET', '/completed', {target:'.filters', swap:'afterend'})
+                        else
+                            // need to first set to undefined in case the fetch may return empty which
+                            // will indiscriminately leave it in incorrect state
+                            set $clearCompleted to undefined
+                            htmx.ajax('GET', '/completed', {target:'.clear-completed', swap:'outerHTML'})
+                    send toggleFooter to <section.todoapp/>
+                " {
+                    span
+                        class="todo-count"
+                        hx-trigger="load"
+                        _="
+                            on load send todoCount to me
+                            on todoCount debounced at 100ms
+                            fetch /update-counts then put the result into me
+                        " {}
+                    (filter_bar(filters))
+                    (clear_completed(has_completed))
+                }
+        }
+    }
+}
+
+pub fn todo_list(todos: &[Todo], filter_name: &str) -> Markup {
+    let has_todos = todos.len() != 0;
+    html! {
+        @if has_todos {
+            ul
+                class="todo-list"
+                _="on load set $todo to me" {
+                @for todo in todos {
+                    { (todo_item(todo, filter_name)) }
+                }
+            }
+        }
+    }
+}
+
+fn todoapp(
+    filters: &[Filter],
+    todos: &[Todo],
+    checked: bool,
+    has_completed: bool,
+    filter_name: &str,
+) -> Markup {
     html! {
         body {
             section
                 class="todoapp"
-                hx-get="/get-hash"
-                hx-vals="js:{hash: window.location.hash.slice(2)}"
-                hx-trigger="load"
-                hx-target=".filters"
-                hx-swap="outerHTML"
+                _="
+                    on toggleMain debounced at 1ms
+                        log 'toggleMain'
+                        if $sectionMain
+                            set $sectionMain to undefined
+                            htmx.ajax('GET', '/toggle-main', {target:'section.main', swap:'outerHTML'})
+                        else
+                            htmx.ajax('GET', '/toggle-main', {target:'.todo-list', swap:'beforebegin'})
+                        end
+                    on toggleFooter debounced at 1ms
+                        log 'toggleFooter'
+                        if $footerFooter
+                            fetch /todo-json as json then
+                                log it
+                                log $todo
+                                if $todo.hasChildNodes() === false and it.length === 0
+                                    remove $footerFooter
+                                    set $footerFooter to undefined
+                                end
+                            // set-hash already update the hash on the server
+                            // this reassign the filter class selected base on user interaction
+                            // or location hash changes
+                            for filter in $filter.children
+                                if filter.textContent === 'All' and `${$initial}${$after}` === ''
+                                    add .selected to filter.firstChild
+                                else if filter.textContent !== `${$initial}${$after}`
+                                    remove .selected from filter.firstChild
+                                end
+                            end
+                            // update counts
+                            fetch /update-counts then put the result into <span.todo-count/>
+                        else
+                            htmx.ajax('GET', '/footer', {target:'.header', swap:'beforeend'})
+                        end
+                    on show wait 20ms
+                        // this is the DOM tree diffing of the todo-list, fetch only the needed
+                        // to render and remove accordingly base on route All/Active/Completed
+                        fetch /todo-json as json then
+                            if window.location.hash === '#/active'
+                                for todo in it
+                                    if todo.done
+                                        document.getElementById(`todo-${todo.id}`) then if it remove it end
+                                    else
+                                        document.getElementById(`todo-${todo.id}`) then
+                                            if it === null
+                                                htmx.ajax('GET', `/todo-item?id=${todo.id}`, {target:'.todo-list', swap:'beforeend'})
+                                            end
+                                    end
+                                end
+                            else if window.location.hash === '#/completed'
+                                for todo in it
+                                    if todo.done
+                                        document.getElementById(`todo-${todo.id}`) then
+                                            if it === null
+                                                htmx.ajax('GET', `/todo-item?id=${todo.id}`, {target:'.todo-list', swap:'beforeend'})
+                                            end
+                                    else
+                                        document.getElementById(`todo-${todo.id}`) then if it remove it end
+                                    end
+                                end
+                            else
+                                // loop through the JSON
+                                for todo in it
+                                    // check if the element exist in the current DOM, add if none
+                                    // placement is decided according to order if there's an element
+                                    // with higher than the current todo swap as 'beforebegin'
+                    
+                                    for el in $todo.children
+                                        if parseInt(el.id.slice(5)) > todo.id and document.getElementById(`todo-${todo.id}`) === null
+                                        htmx.ajax('GET', `/todo-item?id=${todo.id}`, {target: `#${el.id}`, swap:'beforebegin'})
+                                        end
+                                    end
+                
+                                    // do reverse lookup for lower than the current todo swap as 'afterend'
+                                    for el in Array.from($todo.children).reverse()
+                                        if parseInt(el.id.slice(5)) < todo.id and document.getElementById(`todo-${todo.id}`) === null
+                                        htmx.ajax('GET', `/todo-item?id=${todo.id}`, {target: `#${el.id}`, swap:'afterend'})
+                                        end
+                                    end
+                
+                                    // if todo is empty initially recursively add all of it
+                                    if $todo.children.length === 0
+                                        htmx.ajax('GET', `/todo-item?id=${todo.id}`, {target:'.todo-list', swap:'beforeend'})
+                                    end
+                                end
+                "
                 {
                     header class="header" {
                         h1 { "todos" }
@@ -172,82 +324,56 @@ fn todoapp(filters: &[Filter], todos: &[Todo], checked: bool) -> Markup {
                             name="task"
                             class="new-todo"
                             placeholder="What needs to be done?"
-                            hx-get="/add-todo"
-                            hx-trigger="keyup[keyCode==13], task"
-                            hx-target=".todo-list"
-                            hx-swap="beforeend"
-                            autofocus
                             _="
-                                on htmx:afterRequest set my value to ''
-                                on focus my.focus()" {}
+                                on load send focus to me
+                                on focus
+                                if $focus === undefined
+                                    my.focus()
+                                    set $isFocus to 'true'
+                                end
+                                on blur set $isFocus to undefined
+                                on keyup[keyCode==13]
+                                if $todo
+                                    htmx.ajax('GET', `/add-todo?task=${my.value}`, {target:'.todo-list', swap:'beforeend'})
+                                    set my value to ''
+                                else
+                                    htmx.ajax('GET', `/add-todo?task=${my.value}`, {target:'.header', swap:'beforeend'})
+                                    set my value to ''
+                                end
+                                    send toggleMain to <section.todoapp/>
+                                    send toggleFooter to <section.todoapp/>
+                            " {}
                     }
-                    section
-                        class="main" {
-                            { (toggle_all(checked)) }
-                            label
-                                for="toggle-all"
-                                _="
-                                    on load send labelToggleAll to me
-                                    on labelToggleAll debounced at 100ms
-                                        if $todo.hasChildNodes() set my.style.display to 'flex'
-                                        else set my.style.display to 'none'"
-                                    style="display:none;" {
-                                    "Mark all as complete"
-                            }
-                        }
-                    ul
-                        class="todo-list"
-                        _="
-                            on load debounced at 10ms 
-                            set $todo to me
-                            send toggleDisplayClearCompleted to <button.clear-completed/>
-                            send footerToggleDisplay to <footer.footer/>
-                            send todoCount to <span.todo-count/>
-                            send toggleAll to <input.toggle-all/>
-                            send footerToggleDisplay to <footer.footer/>
-                            send labelToggleAll to <label/>
-                            send show to <li.todo/>" {
-                        @for todo in todos {
-                            { (todo_item(todo)) }
-                        }
-                    }
-                    footer
-                        class="footer"
-                        _="
-                            on load send footerToggleDisplay to me
-                            on footerToggleDisplay debounced at 100ms
-                            if $todo.hasChildNodes() set my.style.display to 'block'
-                            else set my.style.display to 'none'
-                            send focus to <input.new-todo/>"
-                        style="display:none;" {
-                        span
-                            class="todo-count"
-                            hx-trigger="load"
-                            _="
-                                on load send todoCount to me
-                                on todoCount debounced at 100ms
-                                fetch /update-counts then put the result into me" {}
-                        (filter_bar(filters))
-                        button
-                            class="clear-completed"
-                            _="
-                            on load send toggleDisplayClearCompleted to me
-                            on toggleDisplayClearCompleted debounced at 100ms
-                                fetch /completed then
-                                set my.style.display to it
-                            end
-                            on click send destroy to <li.completed/>" { 
-                            "Clear Complete"
-                        }
-                    }
+                    { (toggle_main(todos, checked)) }
+                    { (todo_list(todos, filter_name))}
+                    { (footer(todos, filters, has_completed)) }
                 }
         }
     }
 }
 
-fn footer() -> Markup {
+fn header(page_title: &str) -> Markup {
     html! {
-        footer class="info" _="on load debounced at 100ms call startMeUp()" {
+        (DOCTYPE)
+        html lang="en" data-framework="htmx";
+        head {
+            meta charset="utf-8";
+            title { (page_title) }
+            link rel="stylesheet" type="text/css" href="https://unpkg.com/todomvc-common@1.0.5/base.css";
+            link rel="stylesheet" type="text/css" href="https://unpkg.com/todomvc-app-css/index.css";
+        }
+    }
+}
+
+fn info() -> Markup {
+    html! {
+        footer
+            class="info"
+            _="
+                on load debounced at 10ms
+                    call startMeUp()
+                    hashCache()
+            " {
             p { "Double-click to edit a todo" }
             p { "Created by " a href="http://github.com/syarul/" { "syarul" } }
             p { "Part of " a href="http://todomvc.com" { "TodoMVC" } }
@@ -277,7 +403,22 @@ fn scripts() -> Markup {
             \\__|_| |_|\\___| |_|  |_|\\__, |_| |_|\\__|   \\_/\\_/ \\__,_|\\__, |
                                     |___/                           |___/ 
                             by http://github.com/syarul/"
-            end
+        end
+        def hashCache()
+            // this is done to get current location hash then update todo-list and footer
+            set $initial to window.location.hash.slice(2).charAt(0).toUpperCase()
+            set $after to window.location.hash.slice(3)
+            fetch `/set-hash?name=${$initial}${$after}` then
+              send show to <section.todoapp/>
+              send toggleFooter to <section.todoapp/>
+        end
+        // this to handle popstate event such as back/forward button
+        // where it will automatically calling hashCache _hyperscript function
+        js
+            window.addEventListener('popstate', function(){
+                hashCache();
+            });
+        end
     "#,
     );
     html! {
@@ -288,12 +429,19 @@ fn scripts() -> Markup {
     }
 }
 
-pub fn page(title: &str, filters: &[Filter], todos: &[Todo], checked: bool) -> Markup {
+pub fn page(
+    title: &str,
+    filters: &[Filter],
+    todos: &[Todo],
+    checked: bool,
+    has_completed: bool,
+    filter_name: &str,
+) -> Markup {
     html! {
         (header(title))
         body {
-            (todoapp(filters, todos, checked))
-            (footer())
+            (todoapp(filters, todos, checked, has_completed, filter_name))
+            (info())
             (scripts())
         }
     }
