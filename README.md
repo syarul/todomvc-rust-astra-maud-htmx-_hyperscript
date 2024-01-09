@@ -21,10 +21,10 @@
 - install `Rust` if you don't have
 - run `cargo build`
 - run `cargo run`
-- visit [http://localhost:8000/](http://localhost:8000/)
+- visit [http://localhost:8888/](http://localhost:8888/)
 
 ### Concept
-I've choose 3 different ownership concepts with **Atomic**, **Mutex** and **RwLock** to show how to operate handling the todos
+3 different ownership concepts with **Atomic**, **Mutex** and **RwLock** wrap with **Arc** to show how to operate handling the todos in multi threads
 - `Atomic` for the counter, specifically `AtomicU32` unassigned 32-bit integer. the counter will goes up when new todo is inserted to the todos vector.
 - `Mutex` is use to store the todos, with the locking mechanism in place ensure the changes to the todos will be handled correctly on multi thread ops.
 - `RwLock` is used to handle the filter (tab link #/all #/active #/completed), since the length is never changed with only selected parameter changed when pages is click, it save to do read/write operations.

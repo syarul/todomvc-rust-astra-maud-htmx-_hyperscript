@@ -71,14 +71,14 @@ pub fn edit_todo(todo: &Todo) -> Markup {
                     remove .editing from closest <li/>
                 on keyup[keyCode==13]
                     set $keyup to 'enter'
-                    htmx.ajax('GET', '/update-todo?id=${my.parentNode.id}&task=${my.value}', {target: closest <li/>, swap:'outerHTML'})
+                    htmx.ajax('GET', `/update-todo?id=${my.parentNode.id.slice(5)}&task=${my.value}`, {target: closest <li/>, swap:'outerHTML'})
                 on blur debounced at 10ms
                     if $keyup === 'enter'
-                    set $keyup to 'none'
+                        set $keyup to 'none'
                     else if $keyup === 'esc'
-                    set $keyup to 'none'
+                        set $keyup to 'none'
                     else
-                    htmx.ajax('GET', `/update-todo?id=${my.parentNode.id}&task=${my.value}`, {target: closest <li/>, swap:'outerHTML'})
+                    htmx.ajax('GET', `/update-todo?id=${my.parentNode.id.slice(5)}&task=${my.value}`, {target: closest <li/>, swap:'outerHTML'})
                 end
                 send toggleMain to <section.todoapp/>
                 send toggleFooter to <section.todoapp/>
@@ -117,7 +117,7 @@ pub fn todo_item(todo: &Todo, filter_name: &str) -> Markup {
     html! {
         @if should_render {
             li
-                id={ (todo.id) }
+                id={ "todo-"(todo.id) }
                 class={
                     "todo "
                     @if todo.done { "completed " }
@@ -139,15 +139,18 @@ pub fn todo_item(todo: &Todo, filter_name: &str) -> Markup {
                         " { (todo.task) }
                     button
                         class="destroy"
-                        hx-delete={ "/remove-todo?id="(todo.id) }
-                        hx-trigger="click"
-                        hx-target="closest <li/>"
+                        // hx-delete={ "/remove-todo?id="(todo.id) }
+                        // hx-trigger="click"
+                        // hx-target="closest <li/>"
                         _="
-                            on htmx:afterRequest 
-                                send toggleMain to <section.todoapp/>
-                                send toggleFooter to <section.todoapp/>
-                                send focus to <input.new-todo/>
-                                send toggleClearCompleted to <footer.footer/>
+                            on click
+                                fetch `/remove-todo?id=${my.parentNode.parentNode.id.slice(5)}` then
+                                    document.getElementById(`${my.parentNode.parentNode.id}`) then if it remove it then
+                                    send toggleMain to <section.todoapp/>
+                                    send toggleFooter to <section.todoapp/>
+                                    send focus to <input.new-todo/>
+                                    send toggleClearCompleted to <footer.footer/>
+                                end
                         " {}
                 }
                 (edit_todo(todo))
@@ -231,20 +234,18 @@ fn todoapp(
             section
                 class="todoapp"
                 _="
-                    on toggleMain debounced at 1ms
-                        log 'toggleMain'
+                    on toggleMain debounced at 10ms
+                        // log 'toggleMain'
                         if $sectionMain
                             set $sectionMain to undefined
                             htmx.ajax('GET', '/toggle-main', {target:'section.main', swap:'outerHTML'})
                         else
                             htmx.ajax('GET', '/toggle-main', {target:'.todo-list', swap:'beforebegin'})
                         end
-                    on toggleFooter debounced at 1ms
-                        log 'toggleFooter'
+                    on toggleFooter debounced at 10ms
+                        // log 'toggleFooter'
                         if $footerFooter
                             fetch /todo-json as json then
-                                log it
-                                log $todo
                                 if $todo.hasChildNodes() === false and it.length === 0
                                     remove $footerFooter
                                     set $footerFooter to undefined
@@ -327,21 +328,21 @@ fn todoapp(
                             _="
                                 on load send focus to me
                                 on focus
-                                if $focus === undefined
-                                    my.focus()
-                                    set $isFocus to 'true'
-                                end
+                                    if $focus === undefined
+                                        my.focus()
+                                        set $isFocus to 'true'
+                                    end
                                 on blur set $isFocus to undefined
                                 on keyup[keyCode==13]
-                                if $todo
-                                    htmx.ajax('GET', `/add-todo?task=${my.value}`, {target:'.todo-list', swap:'beforeend'})
-                                    set my value to ''
-                                else
-                                    htmx.ajax('GET', `/add-todo?task=${my.value}`, {target:'.header', swap:'beforeend'})
-                                    set my value to ''
-                                end
-                                    send toggleMain to <section.todoapp/>
-                                    send toggleFooter to <section.todoapp/>
+                                    if $todo
+                                        htmx.ajax('GET', `/add-todo?task=${my.value}`, {target:'.todo-list', swap:'beforeend'})
+                                        set my value to ''
+                                    else
+                                        htmx.ajax('GET', `/add-todo?task=${my.value}`, {target:'.header', swap:'beforeend'})
+                                        set my value to ''
+                                    end
+                                        send toggleMain to <section.todoapp/>
+                                        send toggleFooter to <section.todoapp/>
                             " {}
                     }
                     { (toggle_main(todos, checked)) }

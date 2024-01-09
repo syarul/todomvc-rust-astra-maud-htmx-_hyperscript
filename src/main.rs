@@ -12,41 +12,22 @@ use serde::Serialize;
 // use serde::ser::{SerializeStruct, Serializer};
 use serde_json::json;
 // use std::fmt;
+// use cookie::{Cookie, SameSite};
+// use headers::{HeaderMap, HeaderMapExt, HeaderValue};
+use chrono::DateTime;
 use std::{
     fmt::Debug,
+    fs::read_to_string,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc, Mutex, MutexGuard, RwLock,
     },
+    time::SystemTime,
 };
+// use time::{Duration, OffsetDateTime};
 use url::form_urlencoded::parse;
-
-// pub struct MutexWrapper<T: ?Sized>(pub Mutex<T>);
-
-// impl<T: ?Sized + Serialize> Serialize for MutexWrapper<T> {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: Serializer,
-//     {
-//         self.0
-//             .lock()
-//             .expect("mutex is poisoned")
-//             .serialize(serializer)
-//     }
-// }
-
-// #[derive(Serialize)]
-// struct JsonResponse {
-//     data: String,
-// }
-
-// struct MutexWrapper<T>(Vec<T>);
-
-// impl<T: fmt::Debug> fmt::Debug for MutexWrapper<T> {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         f.debug_tuple("MutexWrapper").field(&self.0).finish()
-//     }
-// }
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng,Rng};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 struct Todo {
@@ -69,19 +50,6 @@ impl Todo {
             editing,
         }
     }
-    // fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    // where
-    //     S: Serializer,
-    // {
-    //     let mut state = serializer.serialize_struct("Todo", 4)?;
-    //     // Serialize individual fields
-    //     state.serialize_field("id", &self.id)?;
-    //     // state.serialize_field("task", &self.task)?;
-    //     state.serialize_field("done", &self.done)?;
-    //     // state.serialize_field("editing", &self.editing)?;
-
-    //     state.end()
-    // }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -127,24 +95,15 @@ fn extract_query_param(query: &str, param_name: &str) -> Option<String> {
 
 fn response(status: u16, mk: PreEscaped<String>) -> Response {
     let mk_str = mk.into_string();
-    ResponseBuilder::new()
+
+    let response_builder = ResponseBuilder::new();
+
+    response_builder
         .status(status)
         .header("Content-Type", "text/html; charset=utf-8")
         .body(Body::new(mk_str))
         .unwrap()
 }
-
-// use generic so we can use this for different template
-/* fn build_str_vector<F, T>(template_frag: F, vector: &Arc<Mutex<Vec<T>>>) -> PreEscaped<String>
-where
-    F: FnOnce(&[T]) -> Markup,
-    T: Clone + PartialEq + Debug,
-{
-    println!("foo!");
-    let vector_read = vector.lock().unwrap();
-    let mk = template_frag(&vector_read);
-    mk
-} */
 
 // use generic so we can use this for different template
 fn build_str_struct<F, T>(template_frag: F, obj: &T) -> PreEscaped<String>
@@ -248,6 +207,27 @@ fn handle_request(
             response(200, struct_response)
         }
         "/" => {
+            let cookies = _req.headers().get("Cookie");
+            let mut is_reset = false;
+            for cookie in cookies.iter() {
+                let cookie_result = cookie.to_str();
+                if let Ok(cookie_value) = cookie_result {
+                    let expires_str = cookie_value.split('=').last().unwrap_or_default();
+                    // the cookie string needed to be formatted by removing 
+                    // the nano seconds before parsing using crono DateTime
+                    let expiration_time_str = &expires_str[..19];
+                    if let Ok(parsed_datetime) = DateTime::parse_from_str(
+                        &(expiration_time_str.to_owned() + " +00:00"),
+                        "%Y-%m-%d %H:%M:%S %z",
+                    ) {
+                        let system_time_from_datetime = SystemTime::from(parsed_datetime);
+                        if SystemTime::now() > system_time_from_datetime {
+                            is_reset = true;
+                        }
+                    }
+                }
+            }
+
             // clone borrow checker on next line
             let filter_name = selected_filter(filters.clone());
             // acquire a read to access the filters array
@@ -262,7 +242,30 @@ fn handle_request(
                 &filter_name,
             );
             let mk_str = mk.into_string();
-            Response::new(Body::new(mk_str))
+
+            if is_reset || cookies.is_none() {
+                // reset data for client when cookie expired
+                todos_lock.clear();
+                id_counter.store(0, Ordering::Relaxed);
+
+                // generate randomId string
+                let mut rng = thread_rng();
+                let random_session_id: String = (&mut rng).sample_iter(Alphanumeric)
+                    .take(128)
+                    .map(char::from)
+                    .collect();
+
+                let cookie_value = format!(
+                    "sessionId={}; Max-Age={}; HttpOnly",
+                    random_session_id,
+                    600
+                );
+                return ResponseBuilder::new()
+                    .header("Set-Cookie", cookie_value)
+                    .body(Body::new(mk_str))
+                    .unwrap();
+            }
+            ResponseBuilder::new().body(Body::new(mk_str)).unwrap()
         }
         "/add-todo" => {
             let todo_task = _req
@@ -366,7 +369,6 @@ fn handle_request(
             if let Some(todo_id_str) = todo_id {
                 if let Ok(todo_id) = todo_id_str.parse::<u32>() {
                     todos_lock.retain(|t| t.id != todo_id);
-                    println!("{:?}", todos_lock);
                     return response(200, PreEscaped(String::new()));
                 }
             }
@@ -408,6 +410,16 @@ fn handle_request(
                 }
             }
             response(400, PreEscaped(String::new()))
+        }
+        // serve axe-core for cypress testing
+        "/node_modules/axe-core/axe.min.js" => {
+            if let Ok(js_content) = read_to_string("node_modules/axe-core/axe.min.js") {
+                let struct_response = PreEscaped(js_content);
+                response(200, struct_response)
+            } else {
+                let struct_response = PreEscaped("500 Internal Server Error".to_string());
+                response(500, struct_response)
+            }
         }
         _ => {
             let struct_response = PreEscaped("404 Not Found".to_string());
