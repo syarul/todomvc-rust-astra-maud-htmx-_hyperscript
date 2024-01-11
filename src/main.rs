@@ -4,15 +4,27 @@ mod fragments;
 pub use maud::*;
 
 use astra::{Body, ConnectionInfo, Request, Response, ResponseBuilder, Server};
-use fragments::{edit_todo, filter_bar, page, todo_item};
+use chrono::DateTime;
+use fragments::{clear_completed, edit_todo, footer, page, todo_item, todo_list, toggle_main};
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
+use serde::Serialize;
 use serde_json::json;
-use std::sync::{
-    atomic::{AtomicU32, Ordering},
-    Arc, Mutex, MutexGuard, RwLock,
+use std::{
+    fmt::Debug,
+    fs::read_to_string,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+        Mutex,
+        MutexGuard,
+        RwLock, //, PoisonError
+    },
+    time::SystemTime,
 };
 use url::form_urlencoded::parse;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 struct Todo {
     id: u32,
     task: String,
@@ -76,24 +88,21 @@ fn extract_query_param(query: &str, param_name: &str) -> Option<String> {
     None
 }
 
-fn response(status: u16, mk: PreEscaped<String>) -> Response {
+fn response(status: u16, mk: PreEscaped<String>, content_type: Option<&str>) -> Response {
     let mk_str = mk.into_string();
-    ResponseBuilder::new()
+
+    let response_builder = ResponseBuilder::new();
+
+    let response_builder = if let Some(content_type) = content_type {
+        response_builder.header("Content-Type", content_type)
+    } else {
+        response_builder.header("Content-Type", "text/html; charset=utf-8")
+    };
+
+    response_builder
         .status(status)
-        .header("Content-Type", "text/html; charset=utf-8")
         .body(Body::new(mk_str))
         .unwrap()
-}
-
-// use generic so we can use this for different template
-fn build_str_vector<F, T>(template_frag: F, vector: &Arc<RwLock<Vec<T>>>) -> PreEscaped<String>
-where
-    F: FnOnce(&[T]) -> Markup,
-    T: Clone + PartialEq,
-{
-    let vector_read = vector.read().unwrap();
-    let mk = template_frag(&vector_read);
-    mk
 }
 
 // use generic so we can use this for different template
@@ -125,6 +134,16 @@ fn has_complete_task(todos: &MutexGuard<'_, Vec<Todo>>) -> bool {
     false
 }
 
+fn selected_filter(filters: Arc<RwLock<Vec<Filter>>>) -> String {
+    let filters_read = filters.read().unwrap();
+    for filter in filters_read.iter() {
+        if filter.selected {
+            return filter.name.to_string();
+        }
+    }
+    "All".to_string()
+}
+
 fn update_counts(todos: &MutexGuard<'_, Vec<Todo>>) -> String {
     let uncompleted_count = count_not_done(todos);
     let plural = if uncompleted_count != 1 { "s" } else { "" };
@@ -139,44 +158,119 @@ fn handle_request(
     todos: Arc<Mutex<Vec<Todo>>>,
     filters: Arc<RwLock<Vec<Filter>>>,
 ) -> Response {
-    // acquire the lock to access and modify the todos vector
-    let mut todos_lock = todos.lock().unwrap();
+    // acquire the lock to access and modify the todos vector,
+    // if poisoned, force to allow access regardless, can be approach in different ways
+    let mut todos_lock = todos.lock().unwrap_or_else(|e| e.into_inner());
 
     match _req.uri().path() {
         "/" => {
+            let cookies = _req.headers().get("Cookie");
+            let mut is_reset = false;
+            for cookie in cookies.iter() {
+                let cookie_result = cookie.to_str();
+                if let Ok(cookie_value) = cookie_result {
+                    let expires_str = cookie_value.split('=').last().unwrap_or_default();
+                    // the cookie string needed to be formatted by removing
+                    // the nano seconds before parsing using crono DateTime
+                    if expires_str.len() >= 19 {
+                        let expiration_time_str = &expires_str[..19];
+                        if let Ok(parsed_datetime) = DateTime::parse_from_str(
+                            &(expiration_time_str.to_owned() + " +00:00"),
+                            "%Y-%m-%d %H:%M:%S %z",
+                        ) {
+                            let system_time_from_datetime = SystemTime::from(parsed_datetime);
+                            if SystemTime::now() > system_time_from_datetime {
+                                is_reset = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // let thread_handle;
+            if is_reset || cookies.is_none() {
+                let _ = &todos_lock.clear();
+                let _ = &id_counter.store(0, Ordering::Relaxed);
+            }
+
+            // clone borrow checker on next line
+            let filter_name = selected_filter(filters.clone());
             // acquire a read to access the filters array
             let filters_read = filters.read().unwrap();
             let checked = def_checked(&todos_lock);
-            let mk = page("HTMX • TodoMVC", &filters_read, &todos_lock, checked);
+
+            let mk = page(
+                "HTMX • TodoMVC",
+                &filters_read,
+                &todos_lock,
+                checked,
+                has_complete_task(&todos_lock),
+                &filter_name,
+            );
+
             let mk_str = mk.into_string();
-            Response::new(Body::new(mk_str))
+
+            if is_reset || cookies.is_none() {
+                // generate randomId string
+                let mut rng = thread_rng();
+                let random_session_id: String = (&mut rng)
+                    .sample_iter(Alphanumeric)
+                    .take(128)
+                    .map(char::from)
+                    .collect();
+
+                let cookie_value =
+                    format!("sessionId={}; Max-Age={}; HttpOnly", random_session_id, 600);
+                return ResponseBuilder::new()
+                    .header("Set-Cookie", cookie_value)
+                    .body(Body::new(mk_str))
+                    .unwrap();
+            }
+            response(200, PreEscaped(mk_str), None)
         }
-        "/get-hash" => {
+        "/set-hash" => {
             let filter_name = _req
                 .uri()
                 .query()
                 .and_then(|query| extract_query_param(query, "name"));
-            let filter_hash = _req
-                .uri()
-                .query()
-                .and_then(|query| extract_query_param(query, "hash"));
-            let vector_response;
+
             if let Some(name) = filter_name {
-                // call to update_selected
-                Filter::update_selected_by_property(name, &filters, |f| &f.name);
-            } else {
-                if let Some(hash) = filter_hash {
-                    if !hash.is_empty() {
-                        Filter::update_selected_by_property(hash, &filters, |f| &f.name);
-                    } else {
-                        Filter::update_selected_by_property("all".to_string(), &filters, |f| {
-                            &f.name
-                        });
-                    }
+                if !name.is_empty() {
+                    Filter::update_selected_by_property("All".to_string(), &filters, |f| &f.name);
+                } else {
+                    // call to update_selected
+                    Filter::update_selected_by_property(name, &filters, |f| &f.name);
                 }
             }
-            vector_response = build_str_vector(|filters| filter_bar(filters), &filters);
-            response(200, vector_response)
+            response(200, PreEscaped(String::new()), None)
+        }
+        "/learn.json" => {
+            let json_str = PreEscaped(serde_json::to_string(&json!({})).unwrap());
+            response(200, json_str, Some("application/json"))
+        }
+        "/update-counts" => {
+            let update_counts_str = update_counts(&todos_lock);
+            let struct_response = PreEscaped(update_counts_str);
+            response(200, struct_response, None)
+        }
+        "/toggle-all" => {
+            let checked = def_checked(&todos_lock);
+            let struct_response = PreEscaped(checked.to_string());
+            response(200, struct_response, None)
+        }
+        "/completed" => {
+            let todo_incomplete = has_complete_task(&todos_lock);
+            if todo_incomplete {
+                let struct_response = clear_completed(todo_incomplete);
+                return response(200, struct_response, None);
+            }
+            response(200, PreEscaped(String::new()), None)
+        }
+        "/footer" => {
+            let filters_read = filters.read().unwrap();
+            let struct_response =
+                footer(&todos_lock, &filters_read, has_complete_task(&todos_lock));
+            response(200, struct_response, None)
         }
         "/add-todo" => {
             let todo_task = _req
@@ -185,16 +279,25 @@ fn handle_request(
                 .and_then(|query| extract_query_param(query, "task"));
             let struct_response;
             if let Some(task) = todo_task {
-                if !task.trim().is_empty() {
-                    let todo = Todo::new_id(task, false, false, &id_counter);
-                    todos_lock.push(todo.clone());
-                    struct_response = build_str_struct(|todo| todo_item(todo), &todo);
-                    return response(200, struct_response);
+                let task_trim = task.trim();
+                if !task_trim.is_empty() {
+                    let todo = Todo::new_id(task_trim.to_string(), false, false, &id_counter);
+                    if todos_lock.len() == 0 {
+                        todos_lock.push(todo);
+                        struct_response = todo_list(&todos_lock, &selected_filter(filters))
+                    } else {
+                        todos_lock.push(todo.clone());
+                        struct_response = build_str_struct(
+                            |todo| todo_item(todo, &selected_filter(filters)),
+                            &todo,
+                        );
+                    }
+                    return response(200, struct_response, None);
                 } else {
-                    return response(200, PreEscaped(String::new()));
+                    return response(200, PreEscaped(String::new()), None);
                 }
             }
-            response(400, PreEscaped(String::new()))
+            response(400, PreEscaped(String::new()), None)
         }
         "/toggle-todo" => {
             let todo_id = _req
@@ -205,12 +308,15 @@ fn handle_request(
                 if let Ok(todo_id) = todo_id_str.parse::<u32>() {
                     if let Some(todo) = todos_lock.iter_mut().find(|t| t.id == todo_id) {
                         todo.done = !todo.done;
-                        let struct_response = build_str_struct(|todo| todo_item(todo), todo);
-                        return response(200, struct_response);
+                        let struct_response = build_str_struct(
+                            |todo| todo_item(todo, &selected_filter(filters)),
+                            todo,
+                        );
+                        return response(200, struct_response, None);
                     }
                 }
             }
-            response(400, PreEscaped(String::new()))
+            response(400, PreEscaped(String::new()), None)
         }
         "/edit-todo" => {
             let todo_id = _req
@@ -225,11 +331,11 @@ fn handle_request(
                         clone_todo.editing = true;
                         let struct_response =
                             build_str_struct(|clone_todo| edit_todo(&clone_todo), &clone_todo);
-                        return response(200, struct_response);
+                        return response(200, struct_response, None);
                     }
                 }
             }
-            response(400, PreEscaped(String::new()))
+            response(400, PreEscaped(String::new()), None)
         }
         "/update-todo" => {
             let todo_id = _req
@@ -249,14 +355,17 @@ fn handle_request(
                         } else {
                             // behave same as remove if user send empty task
                             todos_lock.retain(|t| t.id != todo_id);
-                            return response(200, PreEscaped(String::new()));
+                            return response(200, PreEscaped(String::new()), None);
                         }
-                        let struct_response = build_str_struct(|todo| todo_item(todo), todo);
-                        return response(200, struct_response);
+                        let struct_response = build_str_struct(
+                            |todo| todo_item(todo, &selected_filter(filters)),
+                            todo,
+                        );
+                        return response(200, struct_response, None);
                     }
                 }
             }
-            response(400, PreEscaped(String::new()))
+            response(400, PreEscaped(String::new()), None)
         }
         "/remove-todo" => {
             let todo_id = _req
@@ -266,37 +375,75 @@ fn handle_request(
             if let Some(todo_id_str) = todo_id {
                 if let Ok(todo_id) = todo_id_str.parse::<u32>() {
                     todos_lock.retain(|t| t.id != todo_id);
-                    return response(200, PreEscaped(String::new()));
+                    return response(200, PreEscaped(String::new()), None);
                 }
             }
-            response(400, PreEscaped(String::new()))
+            response(400, PreEscaped(String::new()), None)
         }
-        "/completed" => {
-            let mut display_style = "none";
-            let todo_incomplete = has_complete_task(&todos_lock);
-            if todo_incomplete {
-                display_style = "block"
+        "/toggle-main" => {
+            let struct_response = toggle_main(&todos_lock, def_checked(&todos_lock));
+            response(200, struct_response, None)
+        }
+        "/toggle-footer" => {
+            let filters_read = filters.read().unwrap();
+            let struct_response =
+                footer(&todos_lock, &filters_read, has_complete_task(&todos_lock));
+            response(200, struct_response, None)
+        }
+        "/todo-list" => {
+            println!("called me!");
+            let struct_response = todo_list(&todos_lock, &selected_filter(filters));
+            response(200, struct_response, None)
+        }
+        "/todo-json" => response(
+            200,
+            PreEscaped(serde_json::to_string(&*todos_lock).unwrap()),
+            Some("application/json"),
+        ),
+        "/todo-item" => {
+            let todo_id = _req
+                .uri()
+                .query()
+                .and_then(|query| extract_query_param(query, "id"));
+            if let Some(todo_id_str) = todo_id {
+                if let Ok(todo_id) = todo_id_str.parse::<u32>() {
+                    if let Some(todo) = todos_lock.iter_mut().find(|t| t.id == todo_id) {
+                        let struct_response = build_str_struct(
+                            |todo| todo_item(todo, &selected_filter(filters)),
+                            todo,
+                        );
+                        return response(200, struct_response, None);
+                    }
+                }
             }
-            let struct_response = PreEscaped(display_style.to_string());
-            response(200, struct_response)
+            response(400, PreEscaped(String::new()), None)
         }
-        "/toggle-all" => {
-            let checked = def_checked(&todos_lock);
-            let struct_response = PreEscaped(checked.to_string());
-            response(200, struct_response)
+        // serve axe-core for cypress testing
+        "/node_modules/axe-core/axe.min.js" => {
+            if let Ok(js_content) =
+                read_to_string("cypress-example-todomvc/node_modules/axe-core/axe.min.js")
+            {
+                let struct_response = PreEscaped(js_content);
+                response(200, struct_response, Some("application/javascript"))
+            } else {
+                let struct_response = PreEscaped("500 Internal Server Error".to_string());
+                response(500, struct_response, None)
+            }
         }
-        "/update-counts" => {
-            let update_counts_str = update_counts(&todos_lock);
-            let struct_response = PreEscaped(update_counts_str);
-            response(200, struct_response)
-        }
-        "/learn.json" => {
-            let json_str = PreEscaped(serde_json::to_string(&json!({})).unwrap());
-            response(200, json_str)
-        }
+        // capture path pattern using str.start_with
+        // path if path.starts_with("/assets/js/") => {
+        //     let path = _req.uri().path();
+        //     if let Ok(js_content) = read_to_string(&path[1..]) {
+        //         let struct_response = PreEscaped(js_content);
+        //         response(200, struct_response, Some("application/javascript"))
+        //     } else {
+        //         let struct_response = PreEscaped("500 Internal Server Error".to_string());
+        //         response(500, struct_response, None)
+        //     }
+        // }
         _ => {
             let struct_response = PreEscaped("404 Not Found".to_string());
-            response(404, struct_response)
+            response(404, struct_response, None)
         }
     }
 }
@@ -314,22 +461,22 @@ fn main() {
     let filters = Arc::new(RwLock::new(vec![
         Filter {
             url: "#/",
-            name: "all",
+            name: "All",
             selected: true,
         },
         Filter {
             url: "#/active",
-            name: "active",
+            name: "Active",
             selected: false,
         },
         Filter {
             url: "#/completed",
-            name: "completed",
+            name: "Completed",
             selected: false,
         },
     ]));
 
-    Server::bind("localhost:8000")
+    Server::bind("localhost:8888")
         .serve(move |_req, _info| {
             handle_request(
                 _req,
