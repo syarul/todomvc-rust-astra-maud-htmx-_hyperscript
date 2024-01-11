@@ -30,6 +30,8 @@
 - if you need to see the test in browser run `npm run cypress:open`
 - for headless test `npm run cypress:run`
 
+https://github.com/syarul/todomvc-rust-astra-maud-htmx-_hyperscript/assets/2774594/932b7475-2ddd-48e8-8224-79be69775cac
+
 ### Concept
 3 different ownership concepts with **Atomic**, **Mutex** and **RwLock** wrap with **Arc** to show how to operate handling the todos in multi threads
 - `Atomic` for the counter, specifically `AtomicU32` unassigned 32-bit integer. the counter will goes up when new todo is inserted to the todos vector.
