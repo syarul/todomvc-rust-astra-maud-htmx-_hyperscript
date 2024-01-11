@@ -23,9 +23,9 @@
 - run `cargo run`
 - visit [http://localhost:8888/](http://localhost:8888/)
 - if you need to run the e2e testing make sure to have nodejs installed
-- run in the root folder since the server will pick static asset needed for test covered
+- run in the root folder since the Rust server will pick a static asset needed for covered test
 - do `git clone https://github.com/cypress-io/cypress-example-todomvc`
-- `cd cypress-example-todomvc``
+- `cd cypress-example-todomvc`
 - `npm install`
 - if you need to see the test in browser run `npm run cypress:open`
 - for headless test `npm run cypress:run`
