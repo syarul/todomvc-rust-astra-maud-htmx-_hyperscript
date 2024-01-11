@@ -26,7 +26,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: run
-      run: cargo run
+      run: cargo run &
 
     - uses: actions/setup-node@v3
       with:
