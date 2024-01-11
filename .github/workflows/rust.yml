@@ -46,4 +46,4 @@ jobs:
         npm run cypress:run
 
     - name: stop cargo run
-      run: pkill -f "cargo run"
+      run: pkill -f "cargo run" || true
