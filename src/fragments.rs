@@ -10,7 +10,7 @@ pub fn clear_completed(has_completed: bool) -> Markup {
                     on load set $clearCompleted to me
                     on click send destroy to <li.completed/>
                 " { 
-                "Clear Complete"
+                "Clear completed"
             }
         }
     }
@@ -139,18 +139,17 @@ pub fn todo_item(todo: &Todo, filter_name: &str) -> Markup {
                         " { (todo.task) }
                     button
                         class="destroy"
-                        // hx-delete={ "/remove-todo?id="(todo.id) }
-                        // hx-trigger="click"
-                        // hx-target="closest <li/>"
+                        hx-delete={ "/remove-todo?id="(todo.id) }
+                        hx-trigger="click"
+                        hx-target="closest <li/>"
+                        hx-swap="outerHTML"
                         _="
-                            on click
-                                fetch `/remove-todo?id=${my.parentNode.parentNode.id.slice(5)}` then
-                                    document.getElementById(`${my.parentNode.parentNode.id}`) then if it remove it then
-                                    send toggleMain to <section.todoapp/>
-                                    send toggleFooter to <section.todoapp/>
-                                    send focus to <input.new-todo/>
+                            on htmx:afterRequest debounced at 5ms
+                                send toggleMain to <section.todoapp/>
+                                send toggleFooter to <section.todoapp/>
+                                send focus to <input.new-todo/>
+                                if $todo
                                     send toggleClearCompleted to <footer.footer/>
-                                end
                         " {}
                 }
                 (edit_todo(todo))
@@ -182,7 +181,7 @@ pub fn footer(todos: &[Todo], filters: &[Filter], has_completed: bool) -> Markup
                 class="footer"
                 _="
                     on load set $footerFooter to me
-                    on toggleClearCompleted debounced at 10ms
+                    on toggleClearCompleted debounced at 20ms
                         if $clearCompleted === undefined
                             htmx.ajax('GET', '/completed', {target:'.filters', swap:'afterend'})
                         else
@@ -234,7 +233,7 @@ fn todoapp(
             section
                 class="todoapp"
                 _="
-                    on toggleMain debounced at 10ms
+                    on toggleMain debounced at 20ms
                         // log 'toggleMain'
                         if $sectionMain
                             set $sectionMain to undefined
@@ -242,7 +241,7 @@ fn todoapp(
                         else
                             htmx.ajax('GET', '/toggle-main', {target:'.todo-list', swap:'beforebegin'})
                         end
-                    on toggleFooter debounced at 10ms
+                    on toggleFooter debounced at 20ms
                         // log 'toggleFooter'
                         if $footerFooter
                             fetch /todo-json as json then
@@ -266,6 +265,7 @@ fn todoapp(
                             htmx.ajax('GET', '/footer', {target:'.header', swap:'beforeend'})
                         end
                     on show wait 20ms
+                        log 'fetch show'
                         // this is the DOM tree diffing of the todo-list, fetch only the needed
                         // to render and remove accordingly base on route All/Active/Completed
                         fetch /todo-json as json then

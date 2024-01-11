@@ -1,4 +1,4 @@
-name: Rust
+name: Rust and Cypress Test
 
 on:
   push:
@@ -16,7 +16,34 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - name: Build
+    - name: build
       run: cargo build --verbose
-    # - name: Run tests
-    #   run: cargo test --verbose
+
+  e2e-test:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: run
+      run: cargo run
+
+    - uses: actions/setup-node@v3
+      with:
+        node-version: 18
+
+    - name: clone cypress-example-todomvc
+      run: git clone https://github.com/cypress-io/cypress-example-todomvc.git cypress-example-todomvc
+
+    - name: install dependencies
+      run: |
+        cd cypress-example-todomvc
+        npm install
+
+    - name: run e2e Cypress test
+      run: |
+        cd cypress-example-todomvc
+        npm run cypress:run
+
+    - name: stop cargo run
+      run: pkill -f "cargo run"

@@ -22,6 +22,13 @@
 - run `cargo build`
 - run `cargo run`
 - visit [http://localhost:8888/](http://localhost:8888/)
+- if you need to run the e2e testing make sure to have nodejs installed
+- run in the root folder since the server will pick static asset needed for test covered
+- do `git clone https://github.com/cypress-io/cypress-example-todomvc`
+- `cd cypress-example-todomvc``
+- `npm install`
+- if you need to see the test in browser run `npm run cypress:open`
+- for headless test `npm run cypress:run`
 
 ### Concept
 3 different ownership concepts with **Atomic**, **Mutex** and **RwLock** wrap with **Arc** to show how to operate handling the todos in multi threads
@@ -31,3 +38,6 @@
 
 ### HTMX
 Visit [https://github.com/rajasegar/awesome-htmx](https://github.com/rajasegar/awesome-htmx) to look for HTMX curated infos
+
+### Todo
+- Perf test (consolidate with other langs rust, zig, odin, ocaml, etc+)
